@@ -1,15 +1,18 @@
--- passthrough
+-- polythrough
 --
 -- library for passing midi
 -- between connected ports
 -- + scale quantizing
 -- + user event callbacks
 --
+-- With support for sending
+-- across multiple channels.
+--
 -- for how to use see example script
 
-local Passthrough = {}
-local core = require("passthrough/lib/core")
-local utils = require("passthrough/lib/utils")
+local Polythrough = {}
+local core = require("polythrough/lib/core")
+local utils = require("polythrough/lib/utils")
 
 local tab = require "tabutil"
 local mod = require "core/mods"
@@ -31,8 +34,8 @@ local port_param_items = {
   "crow_cc_selection_b",
 }
 
-Passthrough.user_event = core.user_event
-Passthrough.get_port_from_id = core.get_port_from_id
+Polythrough.user_event = core.user_event
+Polythrough.get_port_from_id = core.get_port_from_id
 
 local function device_event(id, data)
   local port = core.get_port_from_id(id)
@@ -43,6 +46,7 @@ local function device_event(id, data)
       params:get("target_"..port),
       params:get("input_channel_"..port),
       params:get("output_channel_"..port),
+      params:get("additional_channels_"..port),
       params:get("send_clock_"..port)==2,
       params:get("quantize_midi_"..port),
       params:get("current_scale_"..port),
@@ -52,41 +56,41 @@ local function device_event(id, data)
       params:get("crow_cc_selection_a_"..port),
       params:get("crow_cc_selection_b_"..port),
       data)
-    
-    Passthrough.user_event(id, data)
+
+    Polythrough.user_event(id, data)
   end
 end
 
 
-function Passthrough.init()
-  if tab.contains(mod.loaded_mod_names(), "passthrough") then 
-    print("Passthrough already running as mod")
-    return 
+function Polythrough.init()
+  if tab.contains(mod.loaded_mod_names(), "polythrough") then
+    print("Polythrough already running as mod")
+    return
   end
 
   core.setup_midi()
   core.origin_event = device_event -- assign to core event
-  
+
   if core.has_devices == true then
 
       port_amount = tab.count(core.ports)
-      params:add_group("PASSTHROUGH", #port_param_items*port_amount + 2)
-      
+      params:add_group("POLYTHROUGH", #port_param_items*port_amount + 2)
+
       for k, v in pairs(core.ports) do
           params:add_separator(v.port .. ': ' .. v.name)
-          
+
           params:add {
             type="option",
             id="active_" .. v.port,
             name = "Active",
-            options = core.toggles 
+            options = core.toggles
           }
-    
+
           params:add {
             type="number",
             id="target_" .. v.port,
             name = "Target",
-            min = 1, 
+            min = 1,
             max = tab.count(core.targets[v.port]),
             default=1,
             action = function(value)
@@ -94,16 +98,16 @@ function Passthrough.init()
             end,
             formatter = function(param)
               value = param:get()
-    
+
               if value == 1 then return core.targets[v.port][value] end
               local target = core.targets[v.port][value]
               local found_port = utils.table_find_value(core.ports, function(_,v) return target == v.port end)
               if found_port then return found_port.name end
-    
+
               return "Saved port unconnected"
             end,
           }
-          
+
           params:add {
             type = "option",
             id = "input_channel_"..v.port,
@@ -115,6 +119,14 @@ function Passthrough.init()
             id = "output_channel_"..v.port,
             name = "Output channel",
             options = core.output_channels
+          }
+          params:add {
+            type = "number",
+            id = "additional_channels_"..v.port,
+            name = "Additional channels",
+            min = 0,
+            max = 15,
+            default = 0
           }
           params:add {
             type = "option",
@@ -140,7 +152,7 @@ function Passthrough.init()
             name = "Root",
             min = 0,
             max = 11,
-            formatter = function(param) 
+            formatter = function(param)
               return core.root_note_formatter(param:get())
             end,
             action = function()
@@ -200,9 +212,9 @@ function Passthrough.init()
           core.stop_all_notes()
         end
       }
-  
+
   end
   params:bang()
 end
 
-return Passthrough
+return Polythrough

@@ -1,6 +1,6 @@
 local MusicUtil = require "musicutil"
 local pt = {}
-local utils = require("passthrough/lib/utils")
+local utils = require("polythrough/lib/utils")
 
 pt.midi_panic_active = false
 pt.input_channels = {"No change"}
@@ -91,14 +91,14 @@ end
 
 pt.get_port_from_id = function(id) return id_port_lookup[id] end
 
-pt.set_target_connections = function(origin, selection) 
+pt.set_target_connections = function(origin, selection)
   local t = {}
 
   -- SELECT ALL PORTS
   if selection == 1 then
     for k, v in pairs(pt.ports) do
       if v.port ~= origin then
-        table.insert(t, v.connect)  
+        table.insert(t, v.connect)
       end
     end
 
@@ -111,19 +111,19 @@ pt.set_target_connections = function(origin, selection)
       if mc then table.insert(t, mc.connect) end
     end
   end
-  
+
   return t
 end
 
 local create_port_targets_table = function(port)
   local t = {"all"}
-  
+
   for k, v in pairs(pt.ports) do
     if port ~= v.port then
       table.insert(t, v.port)
     end
   end
-  
+
   return t
 end
 
@@ -136,18 +136,18 @@ pt.setup_midi = function()
     for _,dev in pairs(midi.devices) do
         if dev.port~=nil then
             id_port_map[dev.id] = dev.port
-            ports[dev.port] = {id=dev.id, name=dev.name, port=dev.port, connect=midi.connect(dev.port)}            
+            ports[dev.port] = {id=dev.id, name=dev.name, port=dev.port, connect=midi.connect(dev.port)}
         end
     end
 
     pt.ports = ports
     pt.has_devices = tab.count(ports)>0
-    
+
     for k, v in pairs(pt.ports) do
       local port_targets = create_port_targets_table(v.port)
       targets[v.port] = port_targets
     end
-    
+
     id_port_lookup = id_port_map
 
     pt.targets = targets
@@ -214,31 +214,34 @@ pt.quantize_note_data = function(note, current_scale)
 end
 
 -- DATA HANDLERS --
-pt.handle_midi_data = function(msg, target, out_ch, quantize_midi, current_scale, cc_limit)
+pt.handle_midi_data = function(msg, target, out_ch, additional_channels, quantize_midi, current_scale, cc_limit)
     local note = (quantize_midi == 2 and msg.note ~= nil) and pt.quantize_note_data(msg.note, current_scale) or msg.note
 
-    if msg.type == "note_off" then
-        target:note_off(note, 0, out_ch)
-        pt.remove_active_note(target, note, out_ch)
-    elseif msg.type == "note_on" then
-        target:note_on(note, msg.vel, out_ch)
-        table.insert(active_notes,{target,note,out_ch})
-    elseif msg.type == "key_pressure" then
-        target:key_pressure(note, msg.val, out_ch)
-    elseif msg.type == "channel_pressure" then
-        target:channel_pressure(msg.val, out_ch)
-    elseif msg.type == "pitchbend" then
-        target:pitchbend(msg.val, out_ch)
-    elseif msg.type == "program_change" then
-        target:program_change(msg.val, out_ch)
-    elseif msg.type == "cc" then
-        cc_limit_send(msg, target, out_ch, cc_limit)
+    for i = 0, additional_channels do
+      out_ch = out_ch + i
+      if msg.type == "note_off" then
+          target:note_off(note, 0, out_ch)
+          pt.remove_active_note(target, note, out_ch)
+      elseif msg.type == "note_on" then
+          target:note_on(note, msg.vel, out_ch)
+          table.insert(active_notes,{target,note,out_ch})
+      elseif msg.type == "key_pressure" then
+          target:key_pressure(note, msg.val, out_ch)
+      elseif msg.type == "channel_pressure" then
+          target:channel_pressure(msg.val, out_ch)
+      elseif msg.type == "pitchbend" then
+          target:pitchbend(msg.val, out_ch)
+      elseif msg.type == "program_change" then
+          target:program_change(msg.val, out_ch)
+      elseif msg.type == "cc" then
+          cc_limit_send(msg, target, out_ch, cc_limit)
+      end
     end
 end
 
 pt.process_data_for_crow = function(msg, crow_notes, crow_cc_outputs, crow_cc_selection_a, crow_cc_selection_b, quantize_midi, current_scale)
     local note = (quantize_midi == 2 and msg.note ~= nil) and pt.quantize_note_data(msg.note, current_scale) or msg.note
-    
+
     if (crow_notes > 1) then
         local is_first_output_pair = crow_notes == 2
         if msg.type == "note_on" then
@@ -252,14 +255,14 @@ pt.process_data_for_crow = function(msg, crow_notes, crow_cc_outputs, crow_cc_se
         if (crow_cc_outputs > 1) then
             local is_selection_a = msg.cc == crow_cc_selection_a
             local is_selection_b = msg.cc == crow_cc_selection_b
-            
+
             if is_selection_a or is_selection_b then
                 local crow_output = crow_cc_outputs == 2 and 1 or 3
                 if is_selection_a then
-                    pt.crow_cc_data(msg, crow_output) 
+                    pt.crow_cc_data(msg, crow_output)
                 end
                 if is_selection_b then
-                   pt.crow_cc_data(msg, crow_output+1) 
+                   pt.crow_cc_data(msg, crow_output+1)
                 end
             end
         end
@@ -291,12 +294,12 @@ pt.handle_cc_limit = function()
   cc_limit_init = {}
 end
 
-pt.device_event = function(origin, device_target, input_channel, output_channel, send_clock, quantize_midi, current_scale, cc_limit, crow_notes, crow_cc_outputs, crow_cc_selection_a, crow_cc_selection_b, data)
+pt.device_event = function(origin, device_target, input_channel, output_channel, additional_channels, send_clock, quantize_midi, current_scale, cc_limit, crow_notes, crow_cc_outputs, crow_cc_selection_a, crow_cc_selection_b, data)
     if #data == 0 then
         print("no data")
         return
     end
-    
+
     local msg = midi.to_msg(data)
 
     local connections = pt.port_connections[origin] -- check this out to debug
@@ -309,12 +312,12 @@ pt.device_event = function(origin, device_target, input_channel, output_channel,
     --OPTIMISE THIS
     if msg and msg.ch == in_chan and msg.type ~= "clock" then
 
-        
+
         for k, v in pairs(connections) do
-          pt.handle_midi_data(msg, v, out_ch, quantize_midi, scale, cc_limit)
+          pt.handle_midi_data(msg, v, out_ch, additional_channels, quantize_midi, scale, cc_limit)
         end
     end
-    
+
     if send_clock then
         for k, v in pairs(connections) do
           pt.handle_clock_data(msg, v)

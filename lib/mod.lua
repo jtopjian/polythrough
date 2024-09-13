@@ -1,6 +1,6 @@
 local mod = require "core/mods"
-local core = require("passthrough/lib/core")
-local utils = require("passthrough/lib/utils")
+local core = require("polythrough/lib/core")
+local utils = require("polythrough/lib/utils")
 local tab = require "tabutil"
 
 local api = {}
@@ -11,6 +11,7 @@ local default_port_state = {
   target = 1,
   input_channel = 1,
   output_channel = 1,
+  additional_channels = 0,
   send_clock = 1,
   quantize_midi = 1,
   current_scale = 1,
@@ -45,7 +46,7 @@ end
 
 -- STATE FUNCTIONS --
 function write_state()
-  local f = io.open(_path.data.."passthrough.state","w+")
+  local f = io.open(_path.data.."polythrough.state","w+")
   io.output(f)
   io.write("return {")
   local counter = 0
@@ -61,6 +62,7 @@ function write_state()
     io.write("target="..v.target..",")
     io.write("input_channel="..v.input_channel..",")
     io.write("output_channel="..v.output_channel..",")
+    io.write("additional_channels="..v.additional_channels..",")
     io.write("send_clock="..v.send_clock..",")
     io.write("quantize_midi="..v.quantize_midi..",")
     io.write("current_scale="..v.current_scale..",")
@@ -75,11 +77,11 @@ function write_state()
   io.close(f)
 end
 
-function read_state() 
-  local f = io.open(_path.data.."passthrough.state")
+function read_state()
+  local f = io.open(_path.data.."polythrough.state")
   if f ~= nil then
     io.close(f)
-    state = dofile(_path.data.."passthrough.state")
+    state = dofile(_path.data.."polythrough.state")
   end
 
   for i = 1, tab.count(state) do
@@ -102,23 +104,23 @@ function assign_state()
 end
 
 -- HOOKS --
-mod.hook.register("system_post_startup", "read passthrough state", function()
+mod.hook.register("system_post_startup", "read polythrough state", function()
   read_state()
   update_devices()
 end)
 
-mod.hook.register("system_pre_shutdown", "write passthrough state", function()
+mod.hook.register("system_pre_shutdown", "write polythrough state", function()
   write_state()
 end)
 
-mod.hook.register("script_post_cleanup", "passthrough post cleanup", function()
+mod.hook.register("script_post_cleanup", "polythrough post cleanup", function()
   update_devices()
 end)
 
-mod.hook.register("script_pre_init", "passthrough", function()
+mod.hook.register("script_pre_init", "polythrough", function()
   -- tweak global environment here ahead of the script `init()` function being called
   local script_init = init
-  
+
   init = function()
       script_init()
       update_devices()
@@ -140,7 +142,7 @@ function create_config()
           end
         end
     end
-    
+
     state[v.port].dev_port = v.port
 
     -- config creates an object for each passthru parameter
@@ -164,7 +166,7 @@ function create_config()
           local target = core.targets[v.port][value]
           local found_port = utils.table_find_value(core.ports, function(_,v) return target == v.port end)
           if found_port then return found_port.name end
-          
+
           return "Saved port unconnected"
         end
       },
@@ -179,6 +181,14 @@ function create_config()
         id = "output_channel",
         name = "Output channel",
         options = core.output_channels
+      },
+      additional_channels = {
+        param_type = "number",
+        id = "additional_channels",
+        name = "Additional channels",
+        minimum = 0,
+        maximum = 15,
+        default = 0
       },
       send_clock = {
         param_type = "option",
@@ -262,7 +272,7 @@ end
 function device_event(id, data)
     local port = core.get_port_from_id(id)
     port_config = state[port]
-    
+
 
     if port_config ~= nil and port_config.active == 2 then
       core.device_event(
@@ -270,6 +280,7 @@ function device_event(id, data)
         port_config.target,
         port_config.input_channel,
         port_config.output_channel,
+        port_config.additional_channels,
         port_config.send_clock,
         port_config.quantize_midi,
         port_config.current_scale,
@@ -279,14 +290,14 @@ function device_event(id, data)
         port_config.crow_cc_selection_a,
         port_config.crow_cc_selection_b,
         data)
-      
+
       api.user_event(id, data)
     end
 end
 
 core.origin_event = device_event -- assign device_event to core origin
 
-function update_devices() 
+function update_devices()
   core.setup_midi()
   config = create_config()
   assign_state()
@@ -310,7 +321,7 @@ function update_parameter(p, index, dir)
   write_state()
 end
 
-function format_parameter(p, index) 
+function format_parameter(p, index)
   if p.formatter and type(p.formatter == "function") then
     return p.formatter(state[index][p.id])
   end
@@ -324,18 +335,18 @@ end
 
 local get_menu_pagination_table = function()
     local t = {}
-    
+
     local counter = 1
     for k, v in pairs(config) do
       t[counter] = k
       counter = counter + 1
     end
-    
+
     return t
 end
 
 -- MOD MENU --
-local screen_order = {"active", "target", "input_channel", "output_channel", "send_clock", "quantize_midi", "root_note", "current_scale", "cc_limit", "crow_notes", "crow_cc_outputs", "crow_cc_selection_a", "crow_cc_selection_b", "midi_panic"}
+local screen_order = {"active", "target", "input_channel", "output_channel", "additional_channels", "send_clock", "quantize_midi", "root_note", "current_scale", "cc_limit", "crow_notes", "crow_cc_outputs", "crow_cc_selection_a", "crow_cc_selection_b", "midi_panic"}
 local m = {
   list=screen_order,
   pos=0,
@@ -369,15 +380,15 @@ end
 
 m.enc = function(n, d)
   m.show_hint = false
-  
-  if core.has_devices == true then 
+
+  if core.has_devices == true then
       if n == 2 then
         if m.pos == 0 and d == -1 then
           m.show_hint = true
         end
         m.pos = util.clamp(m.pos + d, 0, m.len - 1)
       end
-    
+
       if n == 3 then
         local page_port = m.display_devices[m.page]
         if m.list[m.pos+1] == "midi_panic" then
@@ -386,7 +397,7 @@ m.enc = function(n, d)
         else
           update_parameter(config[page_port][m.list[m.pos + 1]], page_port, d)
         end
-      end 
+      end
       mod.menu.redraw()
   end
 end
@@ -395,7 +406,7 @@ m.redraw = function()
   screen.clear()
 
   if core.has_devices == true then
-      
+
       local page_port = m.display_devices[m.page]
       for i=1,6 do
         if (i > 2 - m.pos) and (i < m.len - m.pos + 3) then
@@ -406,7 +417,7 @@ m.redraw = function()
           else
             screen.level(4)
           end
-    
+
           if line == "midi_panic" then
             screen.text("Midi panic : ")
             screen.rect(50, (10*i)-4.5, 5, 5)
@@ -439,7 +450,7 @@ m.redraw = function()
   else
      screen.level(15)
      screen.move(0, 20)
-     screen.text("No devices connected") 
+     screen.text("No devices connected")
      screen.update()
   end
 end
@@ -452,7 +463,7 @@ m.init = function()
   m.display_devices = get_menu_pagination_table()
 end
 
-m.deinit = function() 
+m.deinit = function()
   write_state()
 end
 
